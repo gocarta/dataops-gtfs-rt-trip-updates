@@ -137,9 +137,9 @@ for stop_time in scheduled_stop_times:
 
 i = 0
 
-matched = 0
-
 while True:
+    matched = 0
+
     i += 1
 
     if i > 1:
