@@ -186,6 +186,7 @@ while True:
         destination = clever_stop_predictions_0["des"]
         trip_start_time = clever_stop_predictions_0["stst"]
         trip_start_date = clever_stop_predictions_0["stsd"]  # "2026-05-25"
+        tmstmp = clever_stop_predictions_0["tmstmp"]  # "20260527 19:08"
 
         # "2026-05-25" -> "20260525"
         service_dates_lookup = trip_start_date.replace("-", "")
@@ -198,7 +199,16 @@ while True:
 
         trip_update = entity.trip_update
 
+        tmstmp = datetime.datetime.strptime(tmstmp, "%Y%m%d %H:%M")
+        tmstmp = tmstmp.replace(tzinfo=ZoneInfo(GTFS_TIMEZONE))
+        trip_update.timestamp = int(tmstmp.timestamp())
+
         trip_update.vehicle.id = vid
+
+        # don't currently use disruption management, so all trips are treated as scheduled
+        trip_update.trip.schedule_relationship = (
+            gtfs_realtime_pb2.TripDescriptor.SCHEDULED
+        )
 
         if trip_lookup_key in trips_lookup:
             gtfs_scheduled_trip = trips_lookup[trip_lookup_key]
@@ -237,6 +247,10 @@ while True:
         for i, clever_stop_time in enumerate(clever_stop_predictions):
             stu = trip_update.stop_time_update.add()
 
+            stu.schedule_relationship = (
+                gtfs_realtime_pb2.TripUpdate.StopTimeUpdate.SCHEDULED
+            )
+
             clever_stop_name = clever_stop_time["stpnm"]
             clever_stop_id = clever_stop_time["stpid"]
 
@@ -263,7 +277,17 @@ while True:
                     "[gtfs-rt-trip-updates] unmatched:", stop_time_lookup_key
                 )
 
-            stu.stop_id = str(clever_stop_id)
+            gtfs_stop_id = gtfs_stop_time["stop_id"]
+
+            # e.g., "20260527 19:29"
+            prdtm = clever_stop_time["prdtm"]
+            prdtm = datetime.datetime.strptime(prdtm, "%Y%m%d %H:%M")
+            prdtm = prdtm.replace(tzinfo=ZoneInfo(GTFS_TIMEZONE))
+            prdtm = int(prdtm.timestamp())
+            stu.arrival.time = prdtm
+            stu.departure.time = prdtm
+
+            stu.stop_id = str(gtfs_stop_id)
 
     print("[gtfs-rt-trip-updates] matched:", matched)
 
