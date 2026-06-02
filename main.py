@@ -14,7 +14,7 @@ import datablob
 import datetime
 from google.transit import gtfs_realtime_pb2
 import simple_env as se
-from time import sleep
+from time import perf_counter, sleep
 from zoneinfo import ZoneInfo
 
 AWS_BUCKET_NAME = se.get("AWS_BUCKET_NAME")
@@ -135,16 +135,30 @@ for stop_time in scheduled_stop_times:
     key = (trip_id, stop_code, stop_sequence)
     stop_times_lookup[key] = stop_time
 
-i = 0
+
+def debouncer(wait_seconds):
+    last_called = {"time": 0.0}
+
+    def inner():
+        now = perf_counter()
+        elapsed = now - last_called["time"]
+
+        if elapsed < wait_seconds:
+            print("sleeping", wait_seconds - elapsed, "seconds")
+            sleep(wait_seconds - elapsed)
+
+        last_called["time"] = perf_counter()
+        return last_called["time"]
+
+    return inner
+
+
+debounce = debouncer(GTFS_UPDATE_FREQUENCY)
 
 while True:
+    debounce()
+
     matched = 0
-
-    i += 1
-
-    if i > 1:
-        print(f"[gtfs-rt-trip-updates] sleeping {GTFS_UPDATE_FREQUENCY} seconds")
-        sleep(GTFS_UPDATE_FREQUENCY)
 
     feed = gtfs_realtime_pb2.FeedMessage()
 
