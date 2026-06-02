@@ -160,6 +160,8 @@ while True:
         name="clever_predictions", version="1"
     )
 
+    results = []
+
     # group stop predictions by the transit agency trip id (an id that is internal to Clever)
     clever_predictions_by_tatripid_and_vid = defaultdict(list)
     for row in clever_predictions:
@@ -283,11 +285,34 @@ while True:
             prdtm = clever_stop_time["prdtm"]
             prdtm = datetime.datetime.strptime(prdtm, "%Y%m%d %H:%M")
             prdtm = prdtm.replace(tzinfo=ZoneInfo(GTFS_TIMEZONE))
-            prdtm = int(prdtm.timestamp())
-            stu.arrival.time = prdtm
-            stu.departure.time = prdtm
+            prdtm_ts = int(prdtm.timestamp())
+            stu.arrival.time = prdtm_ts
+            stu.departure.time = prdtm_ts
 
             stu.stop_id = str(gtfs_stop_id)
+
+            row = {
+                "service_id": service_id,
+                "route_id": route_id,
+                "trip_id": gtfs_stop_time["trip_id"],
+                "direction_id": gtfs_stop_time["direction_id"],
+                "stop_headsign": gtfs_stop_time["stop_headsign"],
+                "trip_start_time": gtfs_stop_time["trip_start_time"],
+                "stop_id": gtfs_stop_id,
+                "stop_code": gtfs_stop_time["stop_code"],
+                "stop_name": gtfs_stop_time["stop_name"],
+                "stop_sequence": gtfs_stop_time["stop_sequence"],
+                "stop_sequence_actual": gtfs_stop_time["stop_sequence_actual"],
+                "schedule_relationship": "scheduled",
+                "vehicle_id": vid,
+                "scheduled_arrival_time": gtfs_stop_time["stop_arrival_time"],
+                "scheduled_departure_time": gtfs_stop_time["stop_departure_time"],
+                "predicted_arrival_time": prdtm.isoformat(),
+                "predicted_departure_time": prdtm.isoformat(),
+                "latitude": gtfs_stop_time["latitude"],
+                "longitude": gtfs_stop_time["longitude"],
+            }
+            results.append(row)
 
     print("[gtfs-rt-trip-updates] matched:", matched)
 
@@ -304,3 +329,34 @@ while True:
     )
 
     print(f"[gtfs-rt-trip-updates] updated GTFS Realtime feed")
+
+    client.update_dataset(
+        name="gtfsrt_trip_updates",
+        description="GTFS Realtime Trip Updates.  The predicted arrival times for stops with additional information like location and headsign.",
+        version="1",
+        data=results,
+        column_names=[
+            "service_id",
+            "route_id",
+            "trip_id",
+            "direction_id",
+            "stop_headsign",
+            "trip_start_time",
+            "stop_id",
+            "stop_code",
+            "stop_name",
+            "stop_sequence",
+            "stop_sequence_actual",
+            "schedule_relationship",
+            "vehicle_id",
+            "scheduled_arrival_time",
+            "scheduled_departure_time",
+            "predicted_arrival_time",
+            "predicted_departure_time",
+            "latitude",
+            "longitude",
+        ],
+        latitude_key="latitude",
+        longitude_key="longitude",
+    )
+    print("[dataops-gtfsrt-trip-updates] updated dataset")
