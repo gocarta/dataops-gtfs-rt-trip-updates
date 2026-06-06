@@ -27,7 +27,7 @@ The pipeline runs approximately every 5 seconds on a cloud server.
 | **predicted_arrival_time** | `"16:06:05"` | When the vehicle should arrive at this stop according to realtime system |
 | **predicted_departure_time** | `"16:06:05"` | When the vehicle should leave from this stop according to the realtime system |
 | **latitude** | `35.048171` | Latitude |
-| **longitude** | `-85.309494` │ Longitude |
+| **longitude** | `-85.309494` | Longitude |
 
 ## download links
 - [metadata](https://gocarta.s3.us-east-2.amazonaws.com/public/data/gtfsrt_trip_updates/v1/meta.json)
