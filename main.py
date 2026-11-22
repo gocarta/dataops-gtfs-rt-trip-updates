@@ -57,6 +57,18 @@ def find_sublist(lst, sublst):
     return matches[0]
 
 
+def hms2seconds(hms: str) -> float:
+    print(hms)
+    hours, minutes, seconds = hms.split(":")
+    if hours[0] == "0":
+        hours = hours[1]
+    if minutes[0] == "0":
+        minutes = minutes[1]
+    if seconds[0] == "0":
+        seconds = seconds[1]
+    return 60 * 60 * float(hours) + 60 * float(minutes) + float(seconds)
+
+
 def hms(seconds: int) -> str:
     hours = seconds // 3600
     minutes = (seconds % 3600) // 60
@@ -78,13 +90,17 @@ service_id_by_date = dict(
 )
 # { '20260515': '1', '20260516': '3', '20260517': '2', ... }
 
+print("[dataops-gtfs-rt-trip-updates] getting scheduled_bus_trips as json")
 scheduled_bus_trips = client.get_dataset_as_json(
     name="scheduled_bus_trips", version="1"
 )
+print("[dataops-gtfs-rt-trip-updates] got scheduled_bus_trips as json")
 
+print("[dataops-gtfs-rt-trip-updates] getting scheduled_stop_times as json")
 scheduled_stop_times = client.get_dataset_as_json(
     name="scheduled_stop_times", version="1"
 )
+print("[dataops-gtfs-rt-trip-updates] got scheduled_stop_times as json")
 
 trips_lookup = {}
 stop_times_lookup = {}
@@ -238,7 +254,7 @@ while True:
             gtfs_stop_sequence = None
             trip_update.trip_id = tatrip
             trip_update.trip.direction_id = route_direction
-            raise Exception("unfound gtfs match")
+            raise Exception("[dataops-gtfs-rt-trip-updates] unfound gtfs match")
 
         entity.id = gtfs_trip_id
 
@@ -305,6 +321,10 @@ while True:
 
             stu.stop_id = str(gtfs_stop_id)
 
+            scheduled_dwell_time = hms2seconds(
+                gtfs_stop_time["stop_departure_time"]
+            ) - hms2seconds(gtfs_stop_time["stop_arrival_time"])
+
             row = {
                 "service_id": service_id,
                 "route_id": route_id,
@@ -321,6 +341,7 @@ while True:
                 "vehicle_id": vid,
                 "scheduled_arrival_time": gtfs_stop_time["stop_arrival_time"],
                 "scheduled_departure_time": gtfs_stop_time["stop_departure_time"],
+                "scheduled_dwell_time": scheduled_dwell_time,
                 "predicted_arrival_time": prdtm.isoformat(),
                 "predicted_departure_time": prdtm.isoformat(),
                 "latitude": gtfs_stop_time["latitude"],
@@ -365,6 +386,7 @@ while True:
             "vehicle_id",
             "scheduled_arrival_time",
             "scheduled_departure_time",
+            "scheduled_dwell_time",
             "predicted_arrival_time",
             "predicted_departure_time",
             "latitude",
