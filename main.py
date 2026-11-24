@@ -58,7 +58,6 @@ def find_sublist(lst, sublst):
 
 
 def hms2seconds(hms: str) -> float:
-    print(hms)
     hours, minutes, seconds = hms.split(":")
     if hours[0] == "0":
         hours = hours[1]
@@ -172,227 +171,246 @@ def debouncer(wait_seconds):
 debounce = debouncer(GTFS_UPDATE_FREQUENCY)
 
 while True:
-    debounce()
+    try:
+        debounce()
 
-    matched = 0
+        matched = 0
 
-    feed = gtfs_realtime_pb2.FeedMessage()
+        feed = gtfs_realtime_pb2.FeedMessage()
 
-    now_datetime = datetime.datetime.now(ZoneInfo(GTFS_TIMEZONE))
-    timestamp = int(now_datetime.timestamp())
+        now_datetime = datetime.datetime.now(ZoneInfo(GTFS_TIMEZONE))
+        timestamp = int(now_datetime.timestamp())
 
-    # feed header
-    feed.header.gtfs_realtime_version = "2.0"
-    feed.header.incrementality = gtfs_realtime_pb2.FeedHeader.FULL_DATASET
-    feed.header.timestamp = timestamp
+        # feed header
+        feed.header.gtfs_realtime_version = "2.0"
+        feed.header.incrementality = gtfs_realtime_pb2.FeedHeader.FULL_DATASET
+        feed.header.timestamp = timestamp
 
-    clever_predictions = client.get_dataset_as_json(
-        name="clever_predictions", version="1"
-    )
-
-    results = []
-
-    # group stop predictions by the transit agency trip id (an id that is internal to Clever)
-    clever_predictions_by_tatripid_and_vid = defaultdict(list)
-    for row in clever_predictions:
-        clever_predictions_by_tatripid_and_vid[row["tatripid"], row["vid"]].append(row)
-
-    for (
-        tatrip,
-        vid,
-    ), clever_stop_predictions in clever_predictions_by_tatripid_and_vid.items():
-        # sorting by distance from stop
-        # this is distance along the route, not "as the crow flies" distance
-        clever_stop_predictions.sort(key=lambda x: x["dstp"])
-
-        # list of stop names in order like
-        # ['MARKET + CHOO CHOO', 'MARKET + MAIN', 'MARKET + 17TH', 'MARKET + 19TH', ...]
-        clever_stop_sequence = [it["stpnm"] for it in clever_stop_predictions]
-
-        entity = feed.entity.add()
-
-        clever_stop_predictions_0 = clever_stop_predictions[0]
-
-        route_id = clever_stop_predictions_0["rt"]
-        route_direction = clever_stop_predictions_0["rtdir"]
-        destination = clever_stop_predictions_0["des"]
-        trip_start_time = clever_stop_predictions_0["stst"]
-        trip_start_date = clever_stop_predictions_0["stsd"]  # "2026-05-25"
-        tmstmp = clever_stop_predictions_0["tmstmp"]  # "20260527 19:08"
-
-        # "2026-05-25" -> "20260525"
-        service_dates_lookup = trip_start_date.replace("-", "")
-
-        # in theory, could have multiple service ids on the same date
-        # but we don't do that are CARTA
-        service_id = service_id_by_date[service_dates_lookup]
-
-        trip_lookup_key = (service_id, route_id, destination, trip_start_time)
-
-        trip_update = entity.trip_update
-
-        tmstmp = datetime.datetime.strptime(tmstmp, "%Y%m%d %H:%M")
-        tmstmp = tmstmp.replace(tzinfo=ZoneInfo(GTFS_TIMEZONE))
-        trip_update.timestamp = int(tmstmp.timestamp())
-
-        trip_update.vehicle.id = vid
-
-        # don't currently use disruption management, so all trips are treated as scheduled
-        trip_update.trip.schedule_relationship = (
-            gtfs_realtime_pb2.TripDescriptor.SCHEDULED
+        clever_predictions = client.get_dataset_as_json(
+            name="clever_predictions", version="1"
         )
 
-        if trip_lookup_key in trips_lookup:
-            gtfs_scheduled_trip = trips_lookup[trip_lookup_key]
-            gtfs_trip_id = gtfs_scheduled_trip["trip_id"]
-            gtfs_stop_sequence = gtfs_trip_stop_sequence[gtfs_trip_id]
-            trip_update.trip.trip_id = gtfs_trip_id
-            trip_update.trip.direction_id = int(gtfs_scheduled_trip["direction_id"])
-        else:
-            gtfs_scheduled_trip = None
-            gtfs_trip_id = None
-            gtfs_stop_sequence = None
-            trip_update.trip_id = tatrip
-            trip_update.trip.direction_id = route_direction
-            raise Exception("[dataops-gtfs-rt-trip-updates] unfound gtfs match")
+        results = []
 
-        entity.id = gtfs_trip_id
-
-        if len(clever_stop_sequence) > len(gtfs_stop_sequence):
-            print("[gtfs-rt-trip-updates] route_id:", route_id)
-            print(
-                "[gtfs-rt-trip-updates] number of clever stop predictions:",
-                len(clever_stop_predictions),
-            )
-            print(
-                "[gtfs-rt-trip-updates] number of stops in gtfs:",
-                gtfs_scheduled_trip["stop_count"],
-            )
-            raise Exception(
-                "[gtfs-rt-trip-updated] there are more stops in clever_stop_sequence than in gtfs_stop_sequence!"
-            )
-        stop_sequence_offset = find_sublist(gtfs_stop_sequence, clever_stop_sequence)
-
-        trip_update.trip.route_id = route_id
-        trip_update.trip.start_time = hms(trip_start_time)  # convert 38940 to 10:49:00
-
-        for i, clever_stop_time in enumerate(clever_stop_predictions):
-            stu = trip_update.stop_time_update.add()
-
-            stu.schedule_relationship = (
-                gtfs_realtime_pb2.TripUpdate.StopTimeUpdate.SCHEDULED
+        # group stop predictions by the transit agency trip id (an id that is internal to Clever)
+        clever_predictions_by_tatripid_and_vid = defaultdict(list)
+        for row in clever_predictions:
+            clever_predictions_by_tatripid_and_vid[row["tatripid"], row["vid"]].append(
+                row
             )
 
-            clever_stop_name = clever_stop_time["stpnm"]
-            clever_stop_id = clever_stop_time["stpid"]
+        for (
+            tatrip,
+            vid,
+        ), clever_stop_predictions in clever_predictions_by_tatripid_and_vid.items():
+            # sorting by distance from stop
+            # this is distance along the route, not "as the crow flies" distance
+            clever_stop_predictions.sort(key=lambda x: x["dstp"])
 
-            stop_sequence = stop_sequence_offset + i
+            # list of stop names in order like
+            # ['MARKET + CHOO CHOO', 'MARKET + MAIN', 'MARKET + 17TH', 'MARKET + 19TH', ...]
+            clever_stop_sequence = [it["stpnm"] for it in clever_stop_predictions]
 
-            stop_time_lookup_key = (gtfs_trip_id, str(clever_stop_id), stop_sequence)
+            entity = feed.entity.add()
 
-            if stop_time_lookup_key in stop_times_lookup:
-                gtfs_stop_time = stop_times_lookup[stop_time_lookup_key]
-                matched += 1
+            clever_stop_predictions_0 = clever_stop_predictions[0]
+
+            route_id = clever_stop_predictions_0["rt"]
+            route_direction = clever_stop_predictions_0["rtdir"]
+            destination = clever_stop_predictions_0["des"]
+            trip_start_time = clever_stop_predictions_0["stst"]
+            trip_start_date = clever_stop_predictions_0["stsd"]  # "2026-05-25"
+            tmstmp = clever_stop_predictions_0["tmstmp"]  # "20260527 19:08"
+
+            # "2026-05-25" -> "20260525"
+            service_dates_lookup = trip_start_date.replace("-", "")
+
+            # in theory, could have multiple service ids on the same date
+            # but we don't do that are CARTA
+            service_id = service_id_by_date[service_dates_lookup]
+
+            trip_lookup_key = (service_id, route_id, destination, trip_start_time)
+
+            trip_update = entity.trip_update
+
+            tmstmp = datetime.datetime.strptime(tmstmp, "%Y%m%d %H:%M")
+            tmstmp = tmstmp.replace(tzinfo=ZoneInfo(GTFS_TIMEZONE))
+            trip_update.timestamp = int(tmstmp.timestamp())
+
+            trip_update.vehicle.id = vid
+
+            # don't currently use disruption management, so all trips are treated as scheduled
+            trip_update.trip.schedule_relationship = (
+                gtfs_realtime_pb2.TripDescriptor.SCHEDULED
+            )
+
+            if trip_lookup_key in trips_lookup:
+                gtfs_scheduled_trip = trips_lookup[trip_lookup_key]
+                gtfs_trip_id = gtfs_scheduled_trip["trip_id"]
+                gtfs_stop_sequence = gtfs_trip_stop_sequence[gtfs_trip_id]
+                trip_update.trip.trip_id = gtfs_trip_id
+                trip_update.trip.direction_id = int(gtfs_scheduled_trip["direction_id"])
             else:
+                gtfs_scheduled_trip = None
+                gtfs_trip_id = None
+                gtfs_stop_sequence = None
+                trip_update.trip_id = tatrip
+                trip_update.trip.direction_id = route_direction
+                raise Exception("[dataops-gtfs-rt-trip-updates] unfound gtfs match")
+
+            entity.id = gtfs_trip_id
+
+            if len(clever_stop_sequence) > len(gtfs_stop_sequence):
+                print("[gtfs-rt-trip-updates] route_id:", route_id)
                 print(
-                    "[gtfs-rt-trip-updates] stop_time_lookup_key:", stop_time_lookup_key
+                    "[gtfs-rt-trip-updates] number of clever stop predictions:",
+                    len(clever_stop_predictions),
                 )
-                print("[gtfs-rt-trip-updates] clever_stop_name:", clever_stop_name)
                 print(
-                    "[gtfs-rt-trip-updates] stop_sequence_offset:", stop_sequence_offset
-                )
-                print("[gtfs-rt-trip-updates] gtfs_stop_sequence:", gtfs_stop_sequence)
-                print(
-                    "[gtfs-rt-trip-updates] clever_stop_sequence:", clever_stop_sequence
+                    "[gtfs-rt-trip-updates] number of stops in gtfs:",
+                    gtfs_scheduled_trip["stop_count"],
                 )
                 raise Exception(
-                    "[gtfs-rt-trip-updates] unmatched:", stop_time_lookup_key
+                    "[gtfs-rt-trip-updated] there are more stops in clever_stop_sequence than in gtfs_stop_sequence!"
+                )
+            stop_sequence_offset = find_sublist(
+                gtfs_stop_sequence, clever_stop_sequence
+            )
+
+            trip_update.trip.route_id = route_id
+            trip_update.trip.start_time = hms(
+                trip_start_time
+            )  # convert 38940 to 10:49:00
+
+            for i, clever_stop_time in enumerate(clever_stop_predictions):
+                stu = trip_update.stop_time_update.add()
+
+                stu.schedule_relationship = (
+                    gtfs_realtime_pb2.TripUpdate.StopTimeUpdate.SCHEDULED
                 )
 
-            gtfs_stop_id = gtfs_stop_time["stop_id"]
+                clever_stop_name = clever_stop_time["stpnm"]
+                clever_stop_id = clever_stop_time["stpid"]
 
-            # e.g., "20260527 19:29"
-            prdtm = clever_stop_time["prdtm"]
-            prdtm = datetime.datetime.strptime(prdtm, "%Y%m%d %H:%M")
-            prdtm = prdtm.replace(tzinfo=ZoneInfo(GTFS_TIMEZONE))
-            prdtm_ts = int(prdtm.timestamp())
-            stu.arrival.time = prdtm_ts
-            stu.departure.time = prdtm_ts
+                stop_sequence = stop_sequence_offset + i
 
-            stu.stop_id = str(gtfs_stop_id)
+                stop_time_lookup_key = (
+                    gtfs_trip_id,
+                    str(clever_stop_id),
+                    stop_sequence,
+                )
 
-            scheduled_dwell_time = hms2seconds(
-                gtfs_stop_time["stop_departure_time"]
-            ) - hms2seconds(gtfs_stop_time["stop_arrival_time"])
+                if stop_time_lookup_key in stop_times_lookup:
+                    gtfs_stop_time = stop_times_lookup[stop_time_lookup_key]
+                    matched += 1
+                else:
+                    print(
+                        "[gtfs-rt-trip-updates] stop_time_lookup_key:",
+                        stop_time_lookup_key,
+                    )
+                    print("[gtfs-rt-trip-updates] clever_stop_name:", clever_stop_name)
+                    print(
+                        "[gtfs-rt-trip-updates] stop_sequence_offset:",
+                        stop_sequence_offset,
+                    )
+                    print(
+                        "[gtfs-rt-trip-updates] gtfs_stop_sequence:", gtfs_stop_sequence
+                    )
+                    print(
+                        "[gtfs-rt-trip-updates] clever_stop_sequence:",
+                        clever_stop_sequence,
+                    )
+                    raise Exception(
+                        "[gtfs-rt-trip-updates] unmatched:", stop_time_lookup_key
+                    )
 
-            row = {
-                "service_id": service_id,
-                "route_id": route_id,
-                "trip_id": gtfs_stop_time["trip_id"],
-                "direction_id": gtfs_stop_time["direction_id"],
-                "stop_headsign": gtfs_stop_time["stop_headsign"],
-                "trip_start_time": gtfs_stop_time["trip_start_time"],
-                "stop_id": gtfs_stop_id,
-                "stop_code": gtfs_stop_time["stop_code"],
-                "stop_name": gtfs_stop_time["stop_name"],
-                "stop_sequence": gtfs_stop_time["stop_sequence"],
-                "stop_sequence_actual": gtfs_stop_time["stop_sequence_actual"],
-                "schedule_relationship": "scheduled",
-                "vehicle_id": vid,
-                "scheduled_arrival_time": gtfs_stop_time["stop_arrival_time"],
-                "scheduled_departure_time": gtfs_stop_time["stop_departure_time"],
-                "scheduled_dwell_time": scheduled_dwell_time,
-                "predicted_arrival_time": prdtm.isoformat(),
-                "predicted_departure_time": prdtm.isoformat(),
-                "latitude": gtfs_stop_time["latitude"],
-                "longitude": gtfs_stop_time["longitude"],
-            }
-            results.append(row)
+                gtfs_stop_id = gtfs_stop_time["stop_id"]
 
-    print("[gtfs-rt-trip-updates] matched:", matched)
+                # e.g., "20260527 19:29"
+                prdtm = clever_stop_time["prdtm"]
+                prdtm = datetime.datetime.strptime(prdtm, "%Y%m%d %H:%M")
+                prdtm = prdtm.replace(tzinfo=ZoneInfo(GTFS_TIMEZONE))
+                prdtm_ts = int(prdtm.timestamp())
+                stu.arrival.time = prdtm_ts
+                stu.departure.time = prdtm_ts
 
-    result = feed.SerializeToString()
+                stu.stop_id = str(gtfs_stop_id)
 
-    s3 = boto3.client("s3")
-    s3.put_object(
-        Bucket="gocarta",
-        Key="public/gtfs-rt/TripUpdates.pb",
-        Body=result,
-        ContentType="application/x-protobuf",
-        # Adding CacheControl prevents clients from seeing stale bus locations
-        CacheControl="max-age=0, no-cache, no-store, must-revalidate",
-    )
+                scheduled_dwell_time = hms2seconds(
+                    gtfs_stop_time["stop_departure_time"]
+                ) - hms2seconds(gtfs_stop_time["stop_arrival_time"])
 
-    print(f"[gtfs-rt-trip-updates] updated GTFS Realtime feed")
+                row = {
+                    "service_id": service_id,
+                    "route_id": route_id,
+                    "trip_id": gtfs_stop_time["trip_id"],
+                    "direction_id": gtfs_stop_time["direction_id"],
+                    "stop_headsign": gtfs_stop_time["stop_headsign"],
+                    "trip_start_time": gtfs_stop_time["trip_start_time"],
+                    "stop_id": gtfs_stop_id,
+                    "stop_code": gtfs_stop_time["stop_code"],
+                    "stop_name": gtfs_stop_time["stop_name"],
+                    "stop_sequence": gtfs_stop_time["stop_sequence"],
+                    "stop_sequence_actual": gtfs_stop_time["stop_sequence_actual"],
+                    "schedule_relationship": "scheduled",
+                    "vehicle_id": vid,
+                    "scheduled_arrival_time": gtfs_stop_time["stop_arrival_time"],
+                    "scheduled_departure_time": gtfs_stop_time["stop_departure_time"],
+                    "scheduled_dwell_time": scheduled_dwell_time,
+                    "predicted_arrival_time": prdtm.isoformat(),
+                    "predicted_departure_time": prdtm.isoformat(),
+                    "latitude": gtfs_stop_time["latitude"],
+                    "longitude": gtfs_stop_time["longitude"],
+                }
+                results.append(row)
 
-    client.update_dataset(
-        name="gtfsrt_trip_updates",
-        description="GTFS Realtime Trip Updates.  The predicted arrival times for stops with additional information like location and headsign.",
-        version="1",
-        data=results,
-        column_names=[
-            "service_id",
-            "route_id",
-            "trip_id",
-            "direction_id",
-            "stop_headsign",
-            "trip_start_time",
-            "stop_id",
-            "stop_code",
-            "stop_name",
-            "stop_sequence",
-            "stop_sequence_actual",
-            "schedule_relationship",
-            "vehicle_id",
-            "scheduled_arrival_time",
-            "scheduled_departure_time",
-            "scheduled_dwell_time",
-            "predicted_arrival_time",
-            "predicted_departure_time",
-            "latitude",
-            "longitude",
-        ],
-        latitude_key="latitude",
-        longitude_key="longitude",
-    )
-    print("[dataops-gtfsrt-trip-updates] updated dataset")
+        print("[gtfs-rt-trip-updates] matched:", matched)
+
+        result = feed.SerializeToString()
+
+        s3 = boto3.client("s3")
+        s3.put_object(
+            Bucket="gocarta",
+            Key="public/gtfs-rt/TripUpdates.pb",
+            Body=result,
+            ContentType="application/x-protobuf",
+            # Adding CacheControl prevents clients from seeing stale bus locations
+            CacheControl="max-age=0, no-cache, no-store, must-revalidate",
+        )
+
+        print(f"[gtfs-rt-trip-updates] updated GTFS Realtime feed")
+
+        client.update_dataset(
+            name="gtfsrt_trip_updates",
+            description="GTFS Realtime Trip Updates.  The predicted arrival times for stops with additional information like location and headsign.",
+            version="1",
+            data=results,
+            column_names=[
+                "service_id",
+                "route_id",
+                "trip_id",
+                "direction_id",
+                "stop_headsign",
+                "trip_start_time",
+                "stop_id",
+                "stop_code",
+                "stop_name",
+                "stop_sequence",
+                "stop_sequence_actual",
+                "schedule_relationship",
+                "vehicle_id",
+                "scheduled_arrival_time",
+                "scheduled_departure_time",
+                "scheduled_dwell_time",
+                "predicted_arrival_time",
+                "predicted_departure_time",
+                "latitude",
+                "longitude",
+            ],
+            latitude_key="latitude",
+            longitude_key="longitude",
+        )
+        print("[dataops-gtfsrt-trip-updates] updated dataset")
+
+    except Exception as e:
+        print("[dataops-gtfs-rt-trip-updates] Exception:", e)
